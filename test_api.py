@@ -3,9 +3,14 @@ import time
 from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
+import os
+from dotenv import load_dotenv
 
 # --- CONFIGURATION ---
-API_KEY = "AIzaSyADNKiXVkgr_Jg1znAZpAOqVuvi0OSjIEI"  # Put your actual API key here
+load_dotenv()
+API_KEY = os.getenv("GEMINI_API_KEY")
+
+# --- CONFIGURATION ---
 TARGET_CHUNK = r"chunks\chunk_000.mp4"
 
 client = genai.Client(api_key=API_KEY)
