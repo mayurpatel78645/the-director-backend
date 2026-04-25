@@ -3,7 +3,7 @@ import os
 import sys
 
 
-def compress_and_chunk(input_path, output_dir="chunks", chunk_minutes=20):
+def compress_and_chunk(input_path, output_dir="chunks", chunk_minutes=3):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
@@ -19,16 +19,16 @@ def compress_and_chunk(input_path, output_dir="chunks", chunk_minutes=20):
         "ffmpeg",
         "-hwaccel", "cuda",
         "-i", input_path,
-        "-vf", "scale=-2:480,fps=10",
+        "-vf", "scale=-2:360,fps=1",  # <-- CHANGED to 360p and 1 FPS
         "-c:v", "h264_nvenc",
         "-preset", "p1",
-        "-b:v", "500k",
+        "-b:v", "250k",  # <-- CHANGED bitrate to match 1 fps
         "-c:a", "aac",
-        "-b:a", "128k",
+        "-b:a", "64k",  # <-- CHANGED to mono-equivalent bitrate
         "-f", "segment",
         "-segment_time", str(segment_time),
         "-reset_timestamps", "1",
-        os.path.join(output_dir, "chunk_%03d.mp4")  # Fixed path handling!
+        os.path.join(output_dir, "chunk_%03d.mp4")
     ]
 
     try:

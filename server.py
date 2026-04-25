@@ -7,7 +7,7 @@ from fastapi import FastAPI, UploadFile, File, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import ai_analysis
-import generate_workspace
+import video_renderer
 from fastapi import FastAPI, UploadFile, File, BackgroundTasks, HTTPException
 from fastapi.responses import FileResponse
 
@@ -34,9 +34,9 @@ def run_production_pipeline(job_id: str, file_path: str, filename: str):
         print(f"🧠 [JOB {job_id}] Analyzing...")
         final_data = ai_analysis.process_all_chunks(job_dir)
 
-        # 4. Generate Workspace files
-        print(f"📝 [JOB {job_id}] Generating EDL and Markdown...")
-        generate_workspace.build_workspace_files(job_dir, filename)
+        # 4. Render Final Videos via FFmpeg
+        print(f"🎥 [JOB {job_id}] Rendering final MP4 videos...")
+        video_renderer.render_final_shorts(job_dir, filename)
 
         job_database[job_id] = {
             "status": "COMPLETE",
@@ -71,26 +71,18 @@ async def check_status(job_id: str):
     return job_database.get(job_id, {"status": "NOT_FOUND"})
 
 
-@app.get("/api/download/{job_id}/{file_type}")
-async def download_file(job_id: str, file_type: str):
-    """Securely serves the generated EDL or MD files to the frontend."""
+@app.get("/api/download/{job_id}/{short_id}")
+async def download_video(job_id: str, short_id: str):
+    """Serves the final rendered MP4 to the frontend."""
     job_dir = os.path.join("workspace", job_id)
 
-    if file_type == "edl":
-        file_path = os.path.join(job_dir, "timeline.edl")
-        media_type = "text/plain"
-        filename = "timeline.edl"
-    elif file_type == "md":
-        file_path = os.path.join(job_dir, "Editing_Guide.md")
-        media_type = "text/markdown"
-        filename = "Editing_Guide.md"
-    else:
-        raise HTTPException(status_code=400, detail="Invalid file request")
+    # Find the mp4 file that starts with "Short_{short_id}"
+    for file in os.listdir(job_dir):
+        if file.startswith(f"Short_{short_id}") and file.endswith(".mp4"):
+            file_path = os.path.join(job_dir, file)
+            return FileResponse(file_path, media_type="video/mp4", filename=file)
 
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="File not found. Processing may not be complete.")
-
-    return FileResponse(file_path, media_type=media_type, filename=filename)
+    raise HTTPException(status_code=404, detail="Video not found. Rendering may have failed.")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -12,68 +12,73 @@ from dotenv import load_dotenv
 load_dotenv()
 API_KEY = os.getenv("GEMINI_API_KEY")
 CHUNK_DIR = "chunks"
-CHUNK_DURATION_MINUTES = 20
+CHUNK_DURATION_MINUTES = 3
 
 client = genai.Client(api_key=API_KEY)
 
 
-# --- STRICT DATA MODELS (PYDANTIC) ---
-class EditingGuideStep(BaseModel):
-    effect_timestamp: str = Field(description="Format HH:MM:SS")
-    effect_name: str
-    purpose: str
-    pro_execution_workflow: list[str] = Field(
-        description="List of highly technical DaVinci Resolve instructions. Detail specific Fusion node trees, "
-                    "Color routing, and Fairlight mixing. Be concise and professional.")
-
+# --- STRICT DATA MODELS (PYDANTIC) FOR FFmpeg RENDERER ---
+class TrackClip(BaseModel):
+    start_timestamp: str = Field(description="Format HH:MM:SS")
+    end_timestamp: str = Field(description="Format HH:MM:SS")
+    scale: float = Field(description="Scale multiplier. 1.0 is normal. 2.2 fills 9:16 vertical.")
+    x_offset: float = Field(description="Horizontal pan. 0.0 is center. -0.2 pans left, 0.2 pans right.")
+    y_offset: float = Field(description="Vertical pan. 0.0 is center. -0.2 pans down, 0.2 pans up.")
+    apply_blur: bool = Field(description="True if this is the background layer.")
 
 class ShortClip(BaseModel):
     short_id: int
-    title: str
+    title: str = Field(description="Catchy, clickbait-style title for the Short.")
     start_timestamp: str = Field(description="Must be between 00:00:00 and 00:20:00")
     end_timestamp: str = Field(description="Must be between 00:00:00 and 00:20:00")
-    hook_type: str
-    retention_score: int
-    creative_rationale: str
-    marker_label: str
-    editing_guide: list[EditingGuideStep]
-
+    retention_score: int = Field(description="Score 0-100 based on hook strength and pacing.")
+    creative_rationale: str = Field(description="Why this specific moment will go viral on TikTok/Shorts.")
+    background_track: list[TrackClip] = Field(description="The blurred 300% scale background layer.")
+    action_track: list[TrackClip] = Field(description="The focused, 220% scale foreground layer tracking the action.")
 
 class VideoAnalysis(BaseModel):
     content_type: str
     best_strategy: str
-
 
 class AIOutput(BaseModel):
     video_analysis: VideoAnalysis
     shorts: list[ShortClip]
 
 
-# --- UPDATED MASTER PROMPT ---
-MASTER_PROMPT = """SYSTEM: You are an elite, award-winning DaVinci Resolve editor and top-tier YouTube Shorts/TikTok 
-retention strategist. You do not teach beginners. You speak directly to another master editor.
+# --- UPDATED MASTER PROMPT (VIRAL FFmpeg ENGINE) ---
+MASTER_PROMPT = """SYSTEM: You are an elite Algorithmic Video Director specializing in ultra-high-retention TikToks and YouTube Shorts. Your job is to extract viral moments and calculate precise spatial math for an automated FFmpeg rendering engine.
 
-TASK: Analyze the provided 20-minute video. Select the absolute best 4 short-form clips (15–30 seconds) optimized for 
-maximum virality, retention, and aesthetic quality.
+TASK: Analyze the provided video chunk. Extract the 4 most engaging short-form clips (15-30 seconds). Look for high-action spikes, funny dialogue, or shocking moments.
 
-CRITICAL CONSTRAINTS: 1. TIMESTAMP REALITY CHECK: Timestamps MUST be strictly between 00:00:00 and 00:20:00. 2. NO 
-HALLUCINATIONS: Only select moments that physically happen within this specific video chunk. 3. VERTICAL FORMATTING: 
-Assume a 9:16 vertical workspace. Dictate how to properly frame the action (e.g., fluid Smart Reframe, 
-masked face-tracking, or stylized V1/V2 blurred stacks with drop shadows). 4. ELITE EDITING TECHNIQUES ONLY: I want 
-highly advanced techniques that drive retention and look premium. - FUSION: Planar tracking, 3D compositing, 
-advanced motion blur, displacement maps, data-mosh transitions. - COLOR: Film halation, custom LUT routing, 
-localized power windows, cinematic teal/orange contrast, glow-injected highlights. - EDIT/PACING: Sub-frame J/L cuts, 
-non-linear speed ramping (Optical Flow), matched-action cuts, removing dead air to the millisecond. - AUDIO (
-FAIRLIGHT): Sidechain ducking dialogue over SFX, riser/sub-drop placement, EQ sweeps for transitions.
+CRITICAL RENDER CONSTRAINTS:
+1. TIMESTAMPS: Must physically occur in this chunk (between 00:00:00 and 00:20:00).
+2. THE VIRAL STACK ENGINE: For every short, you must generate TWO parallel tracks that run simultaneously:
+   - background_track: Output a single clip spanning the whole short. Scale must be 3.0. apply_blur must be true.
+   - action_track: Scale should be roughly 2.2. You MUST break this track into multiple smaller clips to aggressively track the action. Use x_offset and y_offset (fractional floats like -0.15 or 0.2) to perfectly center the main subject (e.g., crosshairs, a character's face, a car) as they move across the 16:9 screen. 0.0 is dead center.
+3. PACING & HOOKS: Start the Short exactly when the action or key dialogue starts. Cut out all dead air.
 
-OUTPUT: Provide the concise, highly technical node-trees and professional workflows to achieve these effects. No 
-beginner explanations. Just the raw, advanced editing blueprint."""
-
+Output strictly as JSON matching the schema."""
 
 # --- TIME MATH HELPERS ---
 def time_to_seconds(t_str):
-    h, m, s = map(int, t_str.split(':'))
-    return h * 3600 + m * 60 + s
+    # Clean the string and split by colon
+    parts = str(t_str).replace('.', ':').split(':')
+
+    # If it has 4 parts (HH:MM:SS:FF), drop the frames
+    if len(parts) >= 4:
+        parts = parts[:3]
+
+    # If the AI only gave MM:SS (2 parts), prepend a 0 for hours
+    if len(parts) == 2:
+        parts = [0] + parts
+
+    try:
+        h, m, s = parts
+        # Using float() first catches any weird decimal seconds before converting to int
+        return int(float(h)) * 3600 + int(float(m)) * 60 + int(float(s))
+    except Exception as e:
+        print(f"Warning: Could not parse timecode '{t_str}'. Defaulting to 0.")
+        return 0
 
 
 def seconds_to_time(secs):
@@ -169,8 +174,11 @@ def process_all_chunks(job_dir: str):
                 short['start_timestamp'] = offset_timestamp(short['start_timestamp'], index)
                 short['end_timestamp'] = offset_timestamp(short['end_timestamp'], index)
 
-                for effect in short.get('editing_guide', []):
-                    effect['effect_timestamp'] = offset_timestamp(effect['effect_timestamp'], index)
+                # Offset inner tracks mathematically
+                for track_name in ['background_track', 'action_track']:
+                    for clip in short.get(track_name, []):
+                        clip['start_timestamp'] = offset_timestamp(clip['start_timestamp'], index)
+                        clip['end_timestamp'] = offset_timestamp(clip['end_timestamp'], index)
 
                 all_shorts.append(short)
 
